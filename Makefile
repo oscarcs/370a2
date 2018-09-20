@@ -1,3 +1,6 @@
+CFLAGS=-g
+LDFLAGS=-g
+
 # Compiles all of the tests.
 all: num_cores test1 test2 test3 test4 test5 testFor
 
@@ -5,10 +8,10 @@ num_cores: num_cores.c
 	gcc num_cores.c -o num_cores
 
 test1: test1.c dispatchQueue.o
-	gcc test1.c dispatchQueue.o -o test1 -pthread
+	gcc test1.c dispatchQueue.o -ggdb -o test1 -pthread
 
 test2: test2.c dispatchQueue.o
-	gcc test2.c dispatchQueue.o -o test2 -pthread
+	gcc test2.c dispatchQueue.o -g -o test2 -pthread
 
 test3: test3.c dispatchQueue.o
 	gcc test3.c dispatchQueue.o -o test3 -pthread
@@ -23,4 +26,4 @@ testFor: testFor.c dispatchQueue.o
 	gcc testFor.c dispatchQueue.o -o testFor -pthread
 
 dispatchQueue.o: dispatchQueue.c dispatchQueue.h
-	gcc -c dispatchQueue.c
+	gcc -c -g -Wall dispatchQueue.c

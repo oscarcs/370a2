@@ -12,8 +12,7 @@
 
 #define NUM_CORES sysconf(_SC_NPROCESSORS_ONLN)
 
-void _dispatcher_concurrent(dispatch_queue_t*);
-void _dispatcher_serial(dispatch_queue_t*);
+void _thread_worker(dispatch_queue_thread_t*);
 void _queue_add_task(dispatch_queue_t*, task_t*);
 task_t* _queue_get_task(dispatch_queue_t*);
 
@@ -21,44 +20,40 @@ task_t* _queue_get_task(dispatch_queue_t*);
  * The main dispatch function run by the control thread of this queue.
  * We 
  */
-void _dispatcher_concurrent(dispatch_queue_t* queue) {
+void _thread_worker(dispatch_queue_thread_t* thread) {
     
-    while (1) {
+    for (;;) {
+
+        // Check if we are done; if so, break out of the loop.
+        // sem_wait(&(thread->queue->sem_wait));
+
+        int x;
+        sem_getvalue(&(thread->queue->sem_new_task), &x);
+        printf("new_task value: %i\n", x);
 
         // Wait for a task to arrive
-        sem_wait(&(queue->sem_new_task));
+        sem_wait(&(thread->queue->sem_new_task));
 
         printf("New task recieved!\n");
 
         // Get the task
-        task_t* task = _queue_get_task(queue);
+        task_t* task = _queue_get_task(thread->queue);
 
-        // Schedule the task to an available thread
-        
+        // printf("Task is called %s\n", task->name);
+
+        // Run the task:
+        // task->work(task->params);
 
         // If the task has a semaphore, post to it
-        if (task->type == SYNC) {
-            sem_post(&(task->sem_task));
-        }
+        // if (task->type == SYNC) {
+            // sem_post(&(task->sem_task));
+        // }
 
         // Destroy the task
-
+        //queue
     }
-
     
 
-}
-
-/**
- * Function to run the tasks serially
- */
-void _dispatcher_serial(dispatch_queue_t* queue) {
-    while (1) {
-        // Wait for a new task:
-        sem_wait(&(queue->sem_new_task));
-
-
-    }
 }
 
 /**
@@ -70,15 +65,14 @@ void _queue_add_task(dispatch_queue_t* queue, task_t* task) {
     // maintain data integrity:
     pthread_mutex_lock(&(queue->queue_lock));
 
-    task_t* current = queue->head;
-    while (current->next) {
-        current = current->next;
-    }
-
-    if (!current) {
+    if (!queue->head) {
         queue->head = task;
     }
     else {
+        task_t* current = queue->head;
+        while (current->next) {
+            current = current->next;
+        }
         current->next = task;
     }
 
@@ -117,36 +111,56 @@ dispatch_queue_t* dispatch_queue_create(queue_type_t queueType) {
     
     dispatch_queue_t* queue = malloc(sizeof(dispatch_queue_t));
     queue->state = WAITING;
-    
-    // Initialize the semaphores:
-    sem_init(&(queue->sem_new_task), 0, 0);
-    sem_init(&(queue->sem_next_thread), 0, 0);
-    sem_init(&(queue->sem_wait), 0, 0);
 
+    // Initialize the semaphores:
+
+    if (sem_init(&(queue->sem_new_task), 0, 0) ||
+        sem_init(&(queue->sem_next_thread), 0, 0) ||
+        sem_init(&(queue->sem_wait), 0, 0)
+    ) {
+        error_exit("Semaphore could not be initialized.\n");
+    }
+
+    int threads_to_create = 0;
     int thread_status = 0;
     switch (queueType) {
-        // A concurrent queue dispatches tasks in the order that they 
-        // are added, but they also allow tasks from the same queue
-        // to run concurrently. 
+        // A concurrent queue dispatches tasks in the order that they are 
+        // added, but they also allow tasks from the same queueto run 
+        // concurrently. 
         case CONCURRENT:
             queue->queue_type = CONCURRENT;
-            thread_status = pthread_create(&(queue->thread_control), NULL,
-                _dispatcher_concurrent, queue);
-            break;
+            threads_to_create = NUM_CORES;
+             break;
 
         // A serial queue dispatches a task and waits for the task to
-        // complete before selecting and dispatching the next task.
+        // complete before selecting and dispatching the next task. Hence, it
+        // will have only one worker thread.
         case SERIAL:
             queue->queue_type = SERIAL;
-            thread_status = pthread_create(&(queue->thread_control), NULL,
-                _dispatcher_serial, queue);
+            threads_to_create = 1;
             break;
 
         default:
             error_exit("Invalid queue type.\n");
     }
+    printf("Creating %i threads\n", threads_to_create);
 
-    if (thread_status) error_exit("Could not create control thread.\n");
+    dispatch_queue_thread_t* threads 
+        = malloc(sizeof(dispatch_queue_thread_t) * threads_to_create);
+    queue->threads = threads;
+    
+    // Initialize the threads in the threadpool.
+    for (int i = 0; i < threads_to_create && !thread_status; i++) {
+
+        // Set the reference to the parent
+        threads[i].queue = queue;
+
+        // Finally, start the thread running:
+        thread_status = pthread_create(&(queue->threads[i].thread), NULL,
+            (void * (*)(void *)) _thread_worker, &queue->threads[i]);    
+    }
+
+    if (thread_status) error_exit("Could not create thread.\n");
 
     return queue;
 }
@@ -175,7 +189,7 @@ task_t* task_create(void (* work)(void*) , void* params, char* name) {
         task->name[i] = name[i];
     }
     task->name[i] = '\0';
-    printf("%s", task->name);
+    printf("Creating new task '%s'\n", task->name);
 
     task->work = work;
     task->params = params;
@@ -219,7 +233,10 @@ void dispatch_async(dispatch_queue_t* queue, task_t* task) {
  * tasks are added to the queue after this they are ignored. 
  */
 int dispatch_queue_wait(dispatch_queue_t* queue) {
-    // pthread_join()
+    // Loop through all of the threads, and call pthread_join() on them
+    for (int i = 0; i < NUM_CORES; i++) {
+        // pthread_join(&(queue->threads[i].thread));
+    }
 }
 
 /**

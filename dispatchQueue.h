@@ -50,7 +50,7 @@
         queue_state_t state;                // Current state of the queue.
         task_t* head;                       // First task in the queue (head of the linked list).
         dispatch_queue_thread_t* threads;   // Array of threads to run tasks on.
-        pthread_t thread_control;           // Controls the queue.
+        // pthread_t thread_control;           // Controls the queue.
         pthread_mutex_t queue_lock;         // Lock for reading and writing to the queue.
         sem_t sem_new_task;                 // Semaphore for pending tasks.
         sem_t sem_next_thread;              // Used to wait for a thread to become available.
