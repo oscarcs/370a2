@@ -34,7 +34,7 @@ void _dispatcher_concurrent(dispatch_queue_t* queue) {
         task_t* task = _queue_get_task(queue);
 
         // Schedule the task to an available thread
-            
+        
 
         // If the task has a semaphore, post to it
         if (task->type == SYNC) {
