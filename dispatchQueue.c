@@ -11,10 +11,12 @@
 #include "dispatchQueue.h"
 
 #define NUM_CORES sysconf(_SC_NPROCESSORS_ONLN)
+// #define NUM_CORES 3
 
 void _thread_worker(dispatch_queue_thread_t*);
 void _queue_add_task(dispatch_queue_t*, task_t*);
-task_t* _queue_get_task(dispatch_queue_t*);
+task_t* _queue_pop_task(dispatch_queue_t*);
+int _queue_get_length(dispatch_queue_t*);
 
 /**
  * The main dispatch function run by the control thread of this queue.
@@ -24,36 +26,48 @@ void _thread_worker(dispatch_queue_thread_t* thread) {
     
     for (;;) {
 
-        // Check if we are done; if so, break out of the loop.
-        // sem_wait(&(thread->queue->sem_wait));
-
-        int x;
-        sem_getvalue(&(thread->queue->sem_new_task), &x);
-        printf("new_task value: %i\n", x);
-
         // Wait for a task to arrive
         sem_wait(&(thread->queue->sem_new_task));
+        
+        int sem_tasks, actual_tasks;
+        sem_getvalue(&(thread->queue->sem_new_task), &sem_tasks);
+        actual_tasks = _queue_get_length(thread->queue);
+        printf("\tsemaphore %i (%i), actual (%i)\n", sem_tasks, sem_tasks+1, actual_tasks);
 
-        printf("New task recieved!\n");
+        int end = 1;
 
-        // Get the task
-        task_t* task = _queue_get_task(thread->queue);
+        // If there are actually tasks, we run then
+        if (_queue_get_length(thread->queue) > 0) {            
+            printf("\tNew task recieved!\n");
 
-        // printf("Task is called %s\n", task->name);
+            // Get the task
+            task_t* task = _queue_pop_task(thread->queue);
 
-        // Run the task:
-        // task->work(task->params);
+            if (task != NULL) {
+                printf("\tTask is called %s\n", task->name);
+                end = 0;
 
-        // If the task has a semaphore, post to it
-        // if (task->type == SYNC) {
-            // sem_post(&(task->sem_task));
-        // }
+                // Run the task:
+                task->work(task->params);
 
-        // Destroy the task
-        //queue
+                // If the task has a semaphore, post to it
+                if (task->type == SYNC) {
+                    sem_post(&(task->sem_task));
+                }
+                
+                // Destroy the task
+            }
+            
+        }
+
+        if (end) {
+            printf("\tPosting and exiting...\n");
+            sem_post(&(thread->queue->sem_end));
+            break;
+        }
     }
     
-
+    //@@TODO: clean up stuff.
 }
 
 /**
@@ -85,7 +99,7 @@ void _queue_add_task(dispatch_queue_t* queue, task_t* task) {
 /**
  * Get the next task from the dispatch queue
  */
-task_t* _queue_get_task(dispatch_queue_t* queue) {
+task_t* _queue_pop_task(dispatch_queue_t* queue) {
 
     // Lock the queue in order to preserve data integrity:
     pthread_mutex_lock(&(queue->queue_lock));
@@ -94,13 +108,39 @@ task_t* _queue_get_task(dispatch_queue_t* queue) {
 
     if (queue->head) {
         task = queue->head;
+                
         if (task->next) {
             queue->head = task->next;
+        }
+        else {
+            queue->head = NULL;
         }
     }
 
     pthread_mutex_unlock(&(queue->queue_lock));
     return task;
+}
+
+/**
+ * Get the length of the queue.
+ */
+int _queue_get_length(dispatch_queue_t* queue) {
+    
+    // Lock the queue to preserve data integrity.
+    pthread_mutex_lock(&(queue->queue_lock));
+
+    int count = 0;
+    if (queue->head) {
+        count++;
+        task_t* current = queue->head;
+        while (current->next) {
+            current = current->next;
+            count++;
+        }
+    }
+
+    pthread_mutex_unlock(&(queue->queue_lock));
+    return count;
 }
 
 /**
@@ -110,16 +150,16 @@ task_t* _queue_get_task(dispatch_queue_t* queue) {
 dispatch_queue_t* dispatch_queue_create(queue_type_t queueType) {
     
     dispatch_queue_t* queue = malloc(sizeof(dispatch_queue_t));
-    queue->state = WAITING;
+    // queue->state = WAITING;
 
     // Initialize the semaphores:
-
     if (sem_init(&(queue->sem_new_task), 0, 0) ||
-        sem_init(&(queue->sem_next_thread), 0, 0) ||
-        sem_init(&(queue->sem_wait), 0, 0)
+        sem_init(&(queue->sem_end), 0, 0)
     ) {
         error_exit("Semaphore could not be initialized.\n");
     }
+
+    queue->allow_additional_writes = 1; 
 
     int threads_to_create = 0;
     int thread_status = 0;
@@ -143,7 +183,7 @@ dispatch_queue_t* dispatch_queue_create(queue_type_t queueType) {
         default:
             error_exit("Invalid queue type.\n");
     }
-    printf("Creating %i threads\n", threads_to_create);
+    printf("\tCreating %i threads\n", threads_to_create);
 
     dispatch_queue_thread_t* threads 
         = malloc(sizeof(dispatch_queue_thread_t) * threads_to_create);
@@ -189,7 +229,7 @@ task_t* task_create(void (* work)(void*) , void* params, char* name) {
         task->name[i] = name[i];
     }
     task->name[i] = '\0';
-    printf("Creating new task '%s'\n", task->name);
+    printf("\tCreating new task '%s'\n", task->name);
 
     task->work = work;
     task->params = params;
@@ -210,10 +250,15 @@ void task_destroy(task_t* task) {
  */
 void dispatch_sync(dispatch_queue_t* queue, task_t* task) {
 
+    if (!queue->allow_additional_writes) {
+        return;
+    }
+
     // Initialize a semaphore on the task so we can wait for it
     sem_t* sem = &(task->sem_task);
     sem_init(sem, 0, 0);
 
+    task->type = SYNC;
     _queue_add_task(queue, task);
 
     sem_wait(sem);
@@ -225,6 +270,12 @@ void dispatch_sync(dispatch_queue_t* queue, task_t* task) {
  * will be dispatched sometime in the future.
  */
 void dispatch_async(dispatch_queue_t* queue, task_t* task) {
+    
+    if (!queue->allow_additional_writes) {
+        return;
+    }
+
+    task->type = ASYNC;
     _queue_add_task(queue, task);
 }
 
@@ -232,10 +283,32 @@ void dispatch_async(dispatch_queue_t* queue, task_t* task) {
  * Waits (blocks) until all tasks on the queue have been completed. If new
  * tasks are added to the queue after this they are ignored. 
  */
-int dispatch_queue_wait(dispatch_queue_t* queue) {
-    // Loop through all of the threads, and call pthread_join() on them
-    for (int i = 0; i < NUM_CORES; i++) {
-        // pthread_join(&(queue->threads[i].thread));
+void dispatch_queue_wait(dispatch_queue_t* queue) {
+    
+    // Stop the queue from being written to:
+    queue->allow_additional_writes = 0;    
+
+    int num_threads;
+    switch (queue->queue_type) {
+        case CONCURRENT:
+            num_threads = NUM_CORES;
+            break;
+        case SERIAL:
+            num_threads = 1;
+            break;
+    }
+
+    // Signal to all of the workers that we are finished.
+    // Each thread will get tasks
+    for (int i = 0; i < num_threads; i++) {
+        sem_post(&(queue->sem_new_task));
+    }
+
+    printf("\tWaiting for tasks to complete...\n");
+
+    // Wait for the tasks to finish
+    for (int i = 0; i < num_threads; i++) {
+        sem_wait(&(queue->sem_end));
     }
 }
 
@@ -247,4 +320,17 @@ int dispatch_queue_wait(dispatch_queue_t* queue) {
  */ 
 void dispatch_for(dispatch_queue_t* queue, long number, void (* work)(long)) {
 
+    // Create tasks and asynchronously add them to the queue:
+    for (int i = 0; i < number; i++) {
+        
+        char name[63];
+        sprintf(name, "%d", i);
+
+        task_t* task = task_create((void (* )(void*)) work, i, name);
+
+        dispatch_async(queue, task);
+    }    
+
+    // Wait for the tasks to complete.
+    dispatch_queue_wait(queue);
 }
