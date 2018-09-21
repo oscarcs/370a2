@@ -42,7 +42,7 @@
         dispatch_queue_t* queue;    // The queue this thread is associated with
         pthread_t thread;           // The thread which runs the task
         // sem_t sem_wait;             // The semaphore the thread waits on until a task is allocated
-        task_t* task;               // The current task for this thread
+        // task_t* task;               // The current task for this thread
     };
 
     struct dispatch_queue_t {
@@ -50,6 +50,7 @@
         // queue_state_t state;                // Current state of the queue.
         task_t* head;                       // First task in the queue (head of the linked list).
         dispatch_queue_thread_t* threads;   // Array of threads to run tasks on.
+        int num_threads;                    // Number of threads
         pthread_mutex_t queue_lock;         // Lock for reading and writing to the queue.
         sem_t sem_new_task;                 // Semaphore for pending tasks.
         sem_t sem_end;                      // Semaphore used to stop running threads.
