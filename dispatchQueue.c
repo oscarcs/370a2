@@ -31,13 +31,11 @@ void _thread_worker(dispatch_queue_thread_t* thread) {
 
         // If there are actually tasks, we run then
         if (_queue_get_length(thread->queue) > 0) {            
-            printf("\tNew task recieved!\n");
-
+            
             // Get the task
             task_t* task = _queue_pop_task(thread->queue);
 
             if (task != NULL) {
-                printf("\tTask is called %s\n", task->name);
                 
                 // We're running a real task, which implied that we're not yet
                 // finished.
@@ -59,7 +57,6 @@ void _thread_worker(dispatch_queue_thread_t* thread) {
         }
 
         if (finished) {
-            printf("\tPosting and exiting...\n");
             sem_post(&(thread->queue->sem_end));
             break;
         }
@@ -181,8 +178,7 @@ dispatch_queue_t* dispatch_queue_create(queue_type_t queueType) {
         default:
             error_exit("Invalid queue type.\n");
     }
-    printf("\tCreating %i threads\n", threads_to_create);
-
+    
     // Initialize the threads in the threadpool.
     dispatch_queue_thread_t* threads 
         = malloc(sizeof(dispatch_queue_thread_t) * threads_to_create);
@@ -244,8 +240,7 @@ task_t* task_create(void (* work)(void*) , void* params, char* name) {
         task->name[i] = name[i];
     }
     task->name[i] = '\0';
-    printf("\tCreating new task '%s'\n", task->name);
-
+    
     task->work = work;
     task->params = params;
 
@@ -313,8 +308,6 @@ void dispatch_queue_wait(dispatch_queue_t* queue) {
     for (int i = 0; i < queue->num_threads; i++) {
         sem_post(&(queue->sem_new_task));
     }
-
-    printf("\tWaiting for tasks to complete...\n");
 
     // Wait for each worker thread to finish executing. 
     for (int i = 0; i < queue->num_threads; i++) {

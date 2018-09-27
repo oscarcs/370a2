@@ -1,0 +1,57 @@
+SOFTENG370 Assignment 2
+Oscar Sims
+osim082
+
+9. Explain how your implementation dispatches tasks from the dispatch queues.
+
+Dispatching in my implementation is performed in a similar way for both the 
+serial and the concurrent queues. A task is dispatched by being added to the 
+queue using an internal function:
+
+    task->type = ASYNC;
+    _queue_add_task(queue, task);
+
+The type is set on the task, and then the task is added to the queue:
+
+    if (!queue->head) {
+        queue->head = task;
+    }
+    else {
+        task_t* current = queue->head;
+        while (current->next) {
+            current = current->next;
+        }
+        current->next = task;
+    }
+
+The above snippet walks the task queue, and adds the new task to the end of 
+the singly-linked list contained within the dispatch_queue_t data structure.
+Then, the queue's 'new task' semaphore is posted to:
+
+    sem_post(&(queue->sem_new_task));
+
+This will wake up one of the worker threads, which will begin working on the
+task. Both the serial and concurrent queues use the same code, but the serial
+queue only has a single worker thread, whereas the concurrent queue utilizes a 
+number of threads equal to the number of cores in the system.
+
+
+
+11. Using the time command, time running test4 and test5. Give the results and 
+discuss them. Is there anything unusual? Explain what you observe.
+
+$ time ./test4
+real	0m28.117s
+user	3m6.917s
+sys	0m0.044s
+
+$ time ./test5
+real	0m20.169s
+user	0m20.168s
+sys	0m0.000s
+
+test4 has a 'user' time of much more than the 'real' time; by contrast, the 
+test5 numbers are very similar. This is because test4 uses the concurrent 
+queue, whereas test5 uses the serial queue. In the concurrent queue, each of 
+the threads adds to the total amount of time spent in user code, therefore 
+increasing the 'user' statistic shown above.
