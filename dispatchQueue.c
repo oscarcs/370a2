@@ -23,7 +23,6 @@ int _queue_get_length(dispatch_queue_t*);
 void _thread_worker(dispatch_queue_thread_t* thread) {
     
     for (;;) {
-
         // Wait for a task to arrive
         sem_wait(&(thread->queue->sem_new_task));
 
@@ -61,8 +60,6 @@ void _thread_worker(dispatch_queue_thread_t* thread) {
             break;
         }
     }
-    
-    //@@TODO: clean up stuff.
 }
 
 /**
